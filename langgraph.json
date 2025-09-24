@@ -1,0 +1,9 @@
+{
+  "dockerfile_lines": [],
+  "graphs": {
+    "main": "./src/tech_post_agent/graphs/main.py:agent"
+  },
+  "python_version": "3.12",
+  "env": ".env",
+  "dependencies": ["."]
+}
