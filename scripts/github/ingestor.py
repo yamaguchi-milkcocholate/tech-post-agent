@@ -1,7 +1,7 @@
 from pathlib import Path
 
+from tech_post_agent.tools.core.ingestor import GitHubIngestor
 from tech_post_agent.tools.index import VectorIndex
-from tech_post_agent.tools.ingestor import GitHubIngestor
 
 work_dir = Path(__file__).resolve().parent.parent.parent / ".cache" / "work" / "github"
 
