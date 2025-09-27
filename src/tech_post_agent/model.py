@@ -14,10 +14,13 @@ def embedding_model(dim: int) -> OpenAIEmbeddings:
     return embeddings
 
 
-def chat_model() -> ChatOpenAI:
+def chat_model(model_name: str) -> ChatOpenAI:
+    if model_name not in ("gpt-4o-mini", "gpt-4o"):
+        raise ValueError("Unsupported model_name. Use 'gpt-4o-mini' or 'gpt-4o'.")
+
     api_key = os.getenv("OPENAI_API_KEY")
     model = ChatOpenAI(
-        model="gpt-4o-mini",
+        model=model_name,
         temperature=0,
         max_retries=1,
         api_key=api_key,

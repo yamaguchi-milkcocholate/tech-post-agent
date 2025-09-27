@@ -10,7 +10,7 @@ def main():
     ingest_work_dir = work_dir / "ingest"
     ingest_work_dir.mkdir(parents=True, exist_ok=True)
 
-    ingestor = GitHubIngestor(workdir=ingest_work_dir)
+    ingestor = GitHubIngestor(work_dir=ingest_work_dir)
     path = ingestor.from_github(
         repo_url="https://github.com/shlokkhemani/openpoke", branch="main"
     )

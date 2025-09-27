@@ -1,11 +1,6 @@
-# github.pyの@toolデコレータ付き関数・クラスをまとめてimport
+from .github import download_github_repo
 
-from .base import Done, Question
-from .github import fetch_trend_repo
-
-__all__ = ["fetch_trend_repo", "Question", "Done"]
+__all__ = ["download_github_repo"]
 
 tools = [globals()[name] for name in __all__]
 tools_by_name = {tool.name: tool for tool in tools}
-
-hmtl_tools = ["Question"]
