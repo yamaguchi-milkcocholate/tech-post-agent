@@ -30,10 +30,8 @@ FILE_IGNORES = {"package-lock.json", ".DS_Store"}
 
 
 def rm_excluded_files(root: Path) -> Iterable[Path]:
-    print(root)
     rm_paths = []
     for p in root.rglob("*"):
-        print(p)
         if p.is_dir():
             if p.name in DIR_IGNORES:
                 rm_paths.append(p)
@@ -44,5 +42,21 @@ def rm_excluded_files(root: Path) -> Iterable[Path]:
                 rm_paths.append(p)
 
     for p in rm_paths:
-        shutil.rmtree(p, ignore_errors=True)
+        if p.is_file():
+            p.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(p, ignore_errors=True)
         print(f"rm {p}")
+
+
+def iter_files(root: Path) -> Iterable[Path]:
+    for p in root.rglob("*"):
+        if p.is_dir():
+            if p.name in DIR_IGNORES:
+                continue
+        elif p.is_file() and (p.name in FILE_IGNORES):
+            continue
+        else:
+            if p.suffix.lower() in BIN_EXTS:
+                continue
+            yield p

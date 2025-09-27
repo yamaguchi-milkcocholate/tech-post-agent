@@ -1,6 +1,13 @@
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
+import faiss
+import tiktoken
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -9,148 +16,170 @@ from llama_index.core import (
 )
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 
-from tech_post_agent.model import embedding_model
+from tech_post_agent.model import chat_model, embedding_model
+from tech_post_agent.tools.core.utils import iter_files
 
 
-def _mk_index_path(name: str) -> Path:
-    root_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
-    store_dir = root_dir / ".cache" / "work" / "store"
-    d = store_dir / name
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+class RepoIndex:
+    def __init__(self, chat_model_name: str = "gpt-4o-mini", dim: int = 1536) -> None:
+        self.embed = embedding_model(dim=dim)
+        self.chat_model = chat_model(model_name=chat_model_name)
 
+    def _mk_index_path(self, name: str) -> Path:
+        root_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+        store_dir = root_dir / ".cache" / "work" / "store"
+        d = store_dir / name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
-def _build_reader(
-    root: Path,
-) -> tuple[
-    SimpleDirectoryReader, Callable[[str | Path], SentenceSplitter | CodeSplitter]
-]:
-    # コード寄りの分割器（関数/クラス境界を意識）。難しければ後で固定長に変更可。
-    py_splitter = CodeSplitter(
-        language="python",
-        chunk_lines=300,
-        chunk_lines_overlap=50,
-        max_chars=8000,
-    )
-    txt_splitter = SentenceSplitter()
-
-    def splitter_func(file_path: str | Path) -> SentenceSplitter | CodeSplitter:
-        if str(file_path).endswith(".py"):
-            return py_splitter
-        else:
-            return txt_splitter
-
-    reader = SimpleDirectoryReader(
-        input_dir=root,
-        exclude_hidden=False,
-        recursive=True,
-        required_exts=[
-            ".py",
-            ".ts",
-            ".tsx",
-            ".js",
-            ".jsx",
-            ".java",
-            ".go",
-            ".rs",
-            ".cpp",
-            ".cc",
-            ".c",
-            ".h",
-            ".md",
-            ".txt",
-            ".yml",
-            ".yaml",
-            ".toml",
-            ".json",
-        ],
-        filename_as_id=True,
-        file_extractor={},  # 既定のテキスト抽出を利用
-    )
-    return reader, splitter_func
-
-
-def load_or_create_index(root: Path) -> VectorStoreIndex:
-    name = root.name
-    store_dir = _mk_index_path(name=name)
-    embed = embedding_model(dim=1536)
-
-    if store_dir.exists() and any(store_dir.iterdir()):
-        storage_context = StorageContext.from_defaults(persist_dir=str(store_dir))
-        return load_index_from_storage(
-            storage_context=storage_context, embed_model=embed
+    def _build_reader(
+        self, root: Path
+    ) -> tuple[
+        SimpleDirectoryReader, Callable[[str | Path], SentenceSplitter | CodeSplitter]
+    ]:
+        # コード寄りの分割器（関数/クラス境界を意識）。難しければ後で固定長に変更可。
+        py_splitter = CodeSplitter(
+            language="python",
+            chunk_lines=300,
+            chunk_lines_overlap=50,
+            max_chars=8000,
         )
-    else:
-        reader, splitter_func = _build_reader(root)
-        docs = reader.load_data()
+        txt_splitter = SentenceSplitter()
 
-        nodes = []
-        for doc in docs:
-            splitter = splitter_func(doc.metadata["file_name"])
-            nodes.extend(splitter.get_nodes_from_documents([doc]))
-        index = VectorStoreIndex(nodes, embed_model=embed)
-        index.storage_context.persist(persist_dir=str(store_dir))
-        return index
+        def splitter_func(file_path: str | Path) -> SentenceSplitter | CodeSplitter:
+            if str(file_path).endswith(".py"):
+                return py_splitter
+            else:
+                return txt_splitter
+
+        reader = SimpleDirectoryReader(
+            input_dir=root,
+            exclude_hidden=False,
+            recursive=True,
+            required_exts=[
+                ".py",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".java",
+                ".go",
+                ".rs",
+                ".cpp",
+                ".cc",
+                ".c",
+                ".h",
+                ".md",
+                ".txt",
+                ".yml",
+                ".yaml",
+                ".toml",
+                ".json",
+            ],
+            filename_as_id=True,
+            file_extractor={},  # 既定のテキスト抽出を利用
+        )
+        return reader, splitter_func
+
+    @lru_cache(maxsize=16)
+    def load_or_create_index(self, root: Path) -> VectorStoreIndex:
+        name = root.name
+
+        store_dir = self._mk_index_path(name=name)
+
+        if store_dir.exists() and any(store_dir.iterdir()):
+            storage_context = StorageContext.from_defaults(persist_dir=str(store_dir))
+            return load_index_from_storage(
+                storage_context=storage_context, embed_model=self.embed
+            )
+        else:
+            reader, splitter_func = self._build_reader(root=root)
+            docs = reader.load_data()
+
+            nodes = []
+            for doc in docs:
+                splitter = splitter_func(doc.metadata["file_name"])
+                nodes.extend(splitter.get_nodes_from_documents([doc]))
+            index = VectorStoreIndex(nodes, embed_model=self.embed)
+            index.storage_context.persist(persist_dir=str(store_dir))
+            return index
+
+    def search(self, repo_root: str, query: str, top_k: int = 8) -> list[dict]:
+        idx = self.load_or_create_index(repo_root)
+        hits = idx.as_retriever(similarity_top_k=top_k).retrieve(query)
+        out = []
+        for h in hits:
+            meta = h.node.metadata or {}
+            out.append(
+                {
+                    "path": meta.get("file_name") or meta.get("filename"),
+                    "score": float(h.score or 0.0),
+                    "content": (h.node.get_content() or ""),
+                }
+            )
+        return out
+
+    def answer(self, repo_root: str, question: str, top_k: int = 8) -> str:
+        idx = self.load_or_create_index(repo_root)
+        qe = idx.as_query_engine(similarity_top_k=top_k, llm=self.chat_model)
+        resp = qe.query(question)
+        sources = []
+        for s in getattr(resp, "source_nodes", []) or []:
+            m = s.node.metadata or {}
+            p = m.get("file_name") or m.get("filename")
+            if p and p not in sources:
+                sources.append(p)
+        return f"{str(resp)}\n\n[SOURCES]\n" + "\n".join(f"- {p}" for p in sources)
 
 
-# @tool
-# def index_repo(repo_root: str) -> str:
-#     """
-#     指定ディレクトリをインデックス化し、永続化する。
-#     既存があれば再利用。戻り値は repo_id（例: owner__repo）
-#     """
-#     idx = _load_or_create_index(repo_root)
-#     return _repo_id_from_path(repo_root)
+class VectorIndex:
+    def __init__(self, saved_path: Path | None = None) -> None:
+        self.dim = 32
+        self.embeddings = embedding_model(dim=self.dim)
+        if saved_path and saved_path.exists():
+            self.vector_store = FAISS.load_local(
+                folder_path=str(saved_path),
+                embeddings=self.embeddings,
+                allow_dangerous_deserialization=True,
+            )
+            self.index = self.vector_store.index
+        else:
+            self.index = faiss.IndexFlatL2(
+                len(self.embeddings.embed_query("hello world"))
+            )
+            self.vector_store = FAISS(
+                embedding_function=self.embeddings,
+                index=self.index,
+                docstore=InMemoryDocstore(),
+                index_to_docstore_id={},
+            )
+        self.chunk_size = 1200
+        self.chunk_overlap = 150
 
+    def build(self, root: Path) -> None:
+        enc = tiktoken.get_encoding("cl100k_base")
+        documents: list[Document] = []
+        for p in iter_files(root):
+            print(p)
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            toks = enc.encode(text)
+            for i in range(0, len(toks), self.chunk_size - self.chunk_overlap):
+                sub = enc.decode(toks[i : i + self.chunk_size])
+                doc = Document(page_content=sub, metadata={"path": str(p)})
+                documents.append(doc)
 
-# @tool
-# def search_repo(repo_root: str, query: str, top_k: int = 8) -> List[dict]:
-#     """
-#     インデックスからクエリ検索して上位を返す。各ヒットのpath/score/previewを含む。
-#     """
-#     idx = _load_or_create_index(repo_root)
-#     engine = idx.as_retriever(similarity_top_k=max(1, top_k))
-#     hits = engine.retrieve(query)
-#     out = []
-#     for h in hits:
-#         meta = h.node.metadata or {}
-#         out.append(
-#             {
-#                 "path": meta.get("file_name") or meta.get("filename") or "unknown",
-#                 "score": float(h.score or 0.0),
-#                 "preview": (h.node.get_content() or "")[:500],
-#             }
-#         )
-#     return out
+        uuids = [str(uuid4()) for _ in range(len(documents))]
+        self.vector_store.add_documents(documents=documents, ids=uuids)
 
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.vector_store.save_local(str(path))
 
-# @tool
-# def answer_with_context(
-#     repo_root: str, question: str, top_k: int = 8, system_hint: str | None = None
-# ) -> str:
-#     """
-#     検索→関連ノードをコンテキストに回答生成（簡易版）。
-#     出典（path）の列挙を含める。
-#     """
-#     idx = _load_or_create_index(repo_root)
-#     query_engine = idx.as_query_engine(
-#         similarity_top_k=max(1, top_k),
-#         text_qa_template=None,  # 既定テンプレ
-#     )
-#     if system_hint:
-#         # ChatEngineに切替するほどでなければsystemを混ぜる簡易ハック
-#         pass
-#     resp = query_engine.query(question)
-
-#     # 出典ファイルを併記（重複排除）
-#     sources = []
-#     try:
-#         for s in resp.source_nodes:
-#             meta = s.node.metadata or {}
-#             path = meta.get("file_name") or meta.get("filename")
-#             if path and path not in sources:
-#                 sources.append(path)
-#     except Exception:
-#         pass
-
-#     return f"{str(resp)}\n\n[SOURCES]\n" + "\n".join(f"- {p}" for p in sources)
+    def search(
+        self, query: str, k: int = 8, filter: dict | None = None
+    ) -> list[Document]:
+        results = self.vector_store.similarity_search(query, k=k, filter=filter)
+        return results

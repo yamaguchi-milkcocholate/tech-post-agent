@@ -3,6 +3,8 @@ from pathlib import Path
 
 import requests
 
+from tech_post_agent.tools.core.utils import rm_excluded_files
+
 
 class GitHubIngestor:
     def __init__(self, work_dir: Path):
@@ -28,4 +30,5 @@ class GitHubIngestor:
             zf.extractall(self.work_dir)
 
         unpacked = next(self.work_dir.glob(f"{name}-*"))
+        rm_excluded_files(unpacked)
         return unpacked
