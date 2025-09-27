@@ -1,15 +1,18 @@
+import asyncio
+
 from tech_post_agent.graphs import super_graph
 
 
-def main() -> None:
-    agent = super_graph()
+async def main() -> None:
+    agent = await super_graph()
 
-    response = agent.invoke(
+    response = await agent.ainvoke(
         {
             "messages": [
                 {
                     "role": "user",
-                    "content": "このリポジトリについて教えて: https://github.com/shlokkhemani/openpoke",
+                    "content": "openpoke-mainの内容を一覧して",
+                    # "content": "このリポジトリについて教えて: https://github.com/shlokkhemani/openpoke",
                 }
             ]
         }
@@ -20,4 +23,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

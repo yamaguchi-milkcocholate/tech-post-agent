@@ -8,6 +8,19 @@ class Repo(BaseModel):
     local_path: str
 
 
+class FileMeta(BaseModel):
+    repo_name: str
+    name: str
+    relative_path: str
+    absolute_path: str
+    type: str
+
+
+class File(BaseModel):
+    meta: FileMeta
+    content: str
+
+
 class State(MessagesState):
     # This state class has the messages key build in
     pass

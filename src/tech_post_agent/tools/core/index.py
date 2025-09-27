@@ -15,8 +15,10 @@ from llama_index.core import (
     load_index_from_storage,
 )
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
+from llama_index.core.readers.file.base import _DefaultFileMetadataFunc
 
 from tech_post_agent.model import chat_model, embedding_model
+from tech_post_agent.schema import File
 from tech_post_agent.tools.core.utils import iter_files
 
 
@@ -37,6 +39,8 @@ class RepoIndex:
     ) -> tuple[
         SimpleDirectoryReader, Callable[[str | Path], SentenceSplitter | CodeSplitter]
     ]:
+        name = root.name
+
         # コード寄りの分割器（関数/クラス境界を意識）。難しければ後で固定長に変更可。
         py_splitter = CodeSplitter(
             language="python",
@@ -52,6 +56,7 @@ class RepoIndex:
             else:
                 return txt_splitter
 
+        default_metadata_func = _DefaultFileMetadataFunc()
         reader = SimpleDirectoryReader(
             input_dir=root,
             exclude_hidden=False,
@@ -78,6 +83,11 @@ class RepoIndex:
             ],
             filename_as_id=True,
             file_extractor={},  # 既定のテキスト抽出を利用
+            file_metadata=lambda x: {
+                "repo_name": name,
+                "relative_path": str(Path(x).relative_to(root)),
+            }
+            | default_metadata_func(x),
         )
         return reader, splitter_func
 
@@ -104,19 +114,28 @@ class RepoIndex:
             index.storage_context.persist(persist_dir=str(store_dir))
             return index
 
-    def search(self, repo_root: str, query: str, top_k: int = 8) -> list[dict]:
+    def search(
+        self,
+        repo_root: str,
+        query: str,
+        top_k: int = 8,
+    ) -> list[File]:
         idx = self.load_or_create_index(repo_root)
         hits = idx.as_retriever(similarity_top_k=top_k).retrieve(query)
         out = []
         for h in hits:
             meta = h.node.metadata or {}
-            out.append(
-                {
-                    "path": meta.get("file_name") or meta.get("filename"),
-                    "score": float(h.score or 0.0),
-                    "content": (h.node.get_content() or ""),
-                }
+            file = File(
+                meta={
+                    "repo_name": meta.get("repo_name"),
+                    "name": meta.get("file_name"),
+                    "relative_path": meta.get("relative_path"),
+                    "absolute_path": meta.get("file_path"),
+                    "type": meta.get("file_type"),
+                },
+                content=h.node.get_content(),
             )
+            out.append(file)
         return out
 
     def answer(self, repo_root: str, question: str, top_k: int = 8) -> str:
