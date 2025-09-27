@@ -20,6 +20,14 @@ dependencies = [
     "faiss-cpu>=1.12.0",
     "langchain-community>=0.3.29",
     "langchain-mcp-adapters>=0.1.10",
+    "llama-index>=0.14.3",
+    "llama-index-core>=0.14.3",
+    "llama-index-embeddings-openai>=0.5.1",
+    "llama-index-readers-file>=0.5.4",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-language-pack>=0.9.0",
+    "llama-index-embeddings-langchain>=0.4.1",
+    "llama-index-llms-langchain>=0.7.1",
 ]
 
 [tool.ruff]
